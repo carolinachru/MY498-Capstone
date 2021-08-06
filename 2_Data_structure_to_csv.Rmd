@@ -1,0 +1,77 @@
+---
+title: "2. Data structure to csv"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(jsonlite)
+library(dplyr)
+library(readtext)
+```
+
+Function to extract the individual JSON files created with Python and bind them to a dataframe
+
+```{r}
+path <- "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/all_nograms/"
+file_list <- list.files(path)
+
+fin_df <- data.frame()
+for(file in file_list){
+  temp_file <- fromJSON(paste0(path, file)) 
+  
+  # Remove unimportant information
+  temp_file_mod <- temp_file
+  temp_file_mod[["identifier"]] <- NULL
+  temp_file_mod[["outputFormat"]] <- NULL
+  temp_file_mod[["creator"]] <- NULL
+  temp_file_mod[["tdmCategory"]] <- NULL
+  temp_file_mod[["sourceCategory"]] <- NULL
+  
+  # (1) Metadata information
+  metadata0 <- temp_file_mod %>% as.data.frame() 
+  
+  # (2) Author and tdmCategory information
+  len_author <- length(temp_file$creator)
+  len_tdmCategory <- length(temp_file$tdmCategory)
+  len_sourceCategory <- length(temp_file$sourceCategory)
+  len_language <- length(temp_file$language)
+  
+    # Vector
+  temp_vec <- c(temp_file$creator, temp_file$tdmCategory, temp_file$sourceCategory)
+  
+
+  if(len_author != 0 & len_language == 1){
+    # Names for merging
+    if(len_tdmCategory != 0 & len_sourceCategory == 0){
+      names(temp_vec) <- c(paste0("creator_", 1:len_author), 
+                           paste0("tdmCategory_", 1:len_tdmCategory))
+    } else if (len_tdmCategory == 0 & len_sourceCategory != 0) {
+      names(temp_vec) <- c(paste0("creator_", 1:len_author), 
+                           paste0("sourceCategory_", 1:len_sourceCategory))    
+    } else if (len_tdmCategory == 0 & len_sourceCategory == 0) {
+      names(temp_vec) <- c(paste0("creator_", 1:len_author))      
+    } else { # Both are not zero
+      names(temp_vec) <- c(paste0("creator_", 1:len_author), 
+                           paste0("tdmCategory_", 1:len_tdmCategory),
+                           paste0("sourceCategory_", 1:len_sourceCategory))     
+    }
+    
+    # Merge (1) and (2) for having one line per article
+    fin_file <- c(metadata0, temp_vec)
+    fin_df <- bind_rows(fin_df, fin_file)  
+  }
+
+}
+```
+
+Save raw file
+
+```{r}
+# Save raw file
+write.csv(fin_df, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_nograms_raw.csv")
+saveRDS(fin_df, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_nograms_raw.RDS")
+```

@@ -1,0 +1,640 @@
+---
+title: "5. Gender preprocessing
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Topic analysis
+
+```{r}
+library(dplyr)
+library(quanteda)
+library(stringi)
+library(tidyr)
+library(tidytext)
+library(stm)
+library(ggplot2)
+library(stminsights)
+library(forcats)
+library(pastecs)
+#install.packages("tidytext")
+library(data.table)
+```
+
+```{r}
+# Read
+df_both <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/final_bothP.csv")
+df_both <- df_both %>% filter(is.na(unrel))
+
+```
+
+*Run on both*
+
+-better to use publicationYear
+-wordcount
+
+Topic prevalence covariants: publicationYear
+Topic content covariants: sourceCategory_1
+
+__Clean df_both datasets__
+
+```{r}
+# Distribution of abstract length
+summary(nchar(df_both$abstract))
+
+# Percentile of character length of abstract
+quantile(nchar(df_both$abstract), c(seq(from = 0, to = 1, by = 0.01)))
+print(df_both$abstract[nchar(df_both$abstract) < 100]) # Example of small length
+
+# All journals
+all_journals <- data.frame(table(df_both$journal))
+
+# Drop articles with extreme percentile's value
+df_both <- df_both %>% mutate(len_abs = nchar(abstract), pct = ntile(len_abs, 100)) %>% 
+  filter(pct != 1, pct != 100) %>% select(-c(len_abs, pct)) %>% 
+  mutate(all_category = case_when(category == "all_male" | category ==  "all_female" ~ category, 
+                                  category == "mixed" ~ subcategory_mixed)) 
+  # Here: 34,868
+  # aqui drop los 9
+# Drop articles with information
+df_both <- df_both %>% filter(info == 1, !is.na(all_category)) # 9
+  # Here: 31,171
+
+# To factors for the stm model
+df_both$all_category <- factor(df_both$all_category,
+                               # First category will be used as reference category:
+                               levels = c("alphab", "all_female", "nonalph_female", 
+                                          "nonalph_male", "all_male"))  
+df_both$publicationYear <- factor(df_both$publicationYear) # Here, reference category is 2000
+df_both$journal <- factor(df_both$journal)
+df_both$sourceCategory_1 <- factor(df_both$sourceCategory_1)
+```
+
+Save or load database for topic analysis:
+
+```{r}
+write.csv(df_both, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/final_bothP_clean.csv")
+df_both <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/final_bothP_clean.csv")
+```
+
+*Descriptive statistics*
+
+```{r}
+summary(df_both)
+vars_descriptive <- c("num_authors", "all_category", "female", "male", "female_pct", "male_pct", "alpha_case1", "journal", "publicationYear", "tdmCategory_1", "sourceCategory_1")
+
+test0 <- df_both %>% mutate(estabien = (num_authors - male - female))
+test1 <- test0 %>% filter(estabien == 1)
+
+# For numeric variables
+descrip <- stat.desc(df_both[, vars_descriptive])
+descrip2 <- transpose(descrip)
+colnames(descrip2) <- rownames(descrip)
+rownames(descrip2) <- colnames(descrip)
+write.csv(descrip2, "/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/descriptive_statistics.csv")
+
+# For factor/categorical data
+df_both_graph <- df_both %>% select(id, publicationYear, all_category) %>% 
+  group_by(publicationYear, all_category) %>% summarise(total = n()) %>% 
+  mutate(labs = case_when(all_category == "alphab" ~ "Mixed - alphabetical",
+                          all_category == "all_female" ~ "All women",
+                          all_category == "nonalph_female" ~ "Mixed - women",
+                          all_category == "nonalph_male" ~ "Mixed - men",
+                          all_category == "all_male" ~ "All men"),
+         prop = total / sum(total))
+
+# Graph
+labels_gender <- c("Only women", "Mixed - lead women", "Mixed - alphabetical", "Mixed - lead men", "Only men")
+colors_gender <- c("all_female" = "firebrick", "all_male" = "grey30", 
+                   "alphab" = "rosybrown", "nonalph_female" = "tomato3", 
+                   "nonalph_male" = "grey69")
+
+ggplot(df_both_graph, aes(y = total, x = publicationYear, fill = labs)) + 
+  geom_bar(position = "fill", stat = "identity") + scale_y_continuous(labels = scales::percent) + xlab("Year of publication") + ylab("Percentage") +  scale_fill_manual(name = "Gender", values = c("grey30", "firebrick", "rosybrown", "grey69", "tomato3")) + theme_grey(base_size = 13) + theme(legend.position="bottom")
+
+ggsave("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/desstats_dibn gender.jpeg", width = 8, height = 7)
+```
+
+
+```{r}
+# Top journals
+journals <- data.frame(head(sort(table(df_both$journal), decreasing = TRUE), 50))
+write.csv(journals, "/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/top_journals.csv")
+```
+
+Create separate databases
+
+```{r}
+table(df_both$docType)
+table(df_both$language)
+# Subsets of data
+both_fem <- df_both %>% filter(category == "all_female")
+both_mal <- df_both %>% filter(category == "all_male")
+both_mix_alpha <- df_both %>% filter(subcategory_mixed == "alphab")
+both_mix_fem <- df_both %>% filter(subcategory_mixed == "nonalph_female")
+both_mix_mal <- df_both %>% filter(subcategory_mixed == "nonalph_male")
+```
+
+*Quanteda*
+
+```{r}
+# Separate datasets
+vars <- c("title", "info", "publicationYear", "journal", "tdmCategory_1", "sourceCategory_1")
+fem_corpus <- corpus(both_fem$abstract, docvars = both_fem[, vars])
+mal_corpus <- corpus(both_mal$abstract, docvars = both_mal[, vars])
+```
+
+```{r}
+# One dataset 
+vars_all <- c("title", "info", "all_category", "publicationYear", "journal", "tdmCategory_1", "sourceCategory_1")
+all_corpus <- corpus(df_both$abstract, docvars = df_both[, vars_all])
+```
+
+Clean dfm
+
+```{r}
+# Function for dfm cleaning
+corpus_to_dfm <- function(corpus){
+  dfm <- corpus %>% 
+    tokens(remove_punct = TRUE, remove_symbols = TRUE, remove_numbers = TRUE, remove_url = TRUE) %>%
+    tokens_remove(stopwords("en")) %>% #padding = TRUE (incorporate this?)
+    tokens_wordstem() %>% 
+    tokens_ngrams(n = 1:2) %>%
+    dfm() %>%
+    dfm_trim(min_docfreq = 0.01, docfreq_type = "prop", verbose = TRUE) 
+  return(dfm)
+}
+```
+
+```{r}
+fem_dfm <- corpus_to_dfm(fem_corpus)
+mal_dfm <- corpus_to_dfm(mal_corpus)
+```
+
+```{r}
+all_dfm <- corpus_to_dfm(all_corpus)
+saveRDS(all_dfm, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/final_dfm.RDS")
+```
+
+- dfm_weight(scheme = "prop") not possible: cannot convert a non-count dfm to a topic model format. according to ken, https://stackoverflow.com/questions/63632177/error-converting-to-stm-after-tf-idf-weighting, the topic models needs counts.
+
+*STM package*
+
+```{r}
+# STM package
+fem_stm <- convert(fem_dfm, to = "stm")
+mal_stm <- convert(mal_dfm, to = "stm")
+
+
+# W
+topic40_wcontent_W <- stm(documents = fem_stm$documents, 
+                         vocab = fem_stm$vocab, 
+                         K = 40,
+                         prevalence = ~ publicationYear + journal,
+                         data = fem_stm$meta,
+                         verbose = TRUE,
+                         init.type = "Spectral")
+
+topic40_wcontent_M <- stm(documents = mal_stm$documents, 
+                         vocab = mal_stm$vocab, 
+                         K = 40,
+                         prevalence = ~ publicationYear + journal,
+                         data = mal_stm$meta,
+                         verbose = TRUE,
+                         init.type = "Spectral")
+```
+
+```{r}
+# Save two plots
+name_of_model <- "valid_onegender" # Change here
+path <- "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/"
+
+graphics.off()
+graphics.off()
+graphics.off()
+
+pdf(file = paste0(path, name_of_model, ".pdf"),
+    width = 16, height = 10)
+  par(mfrow = c(1, 2))
+  plot(topic40_wcontent_W, main = "Topic, by only women")
+  plot(topic40_wcontent_M, main = "Topic, by only men")
+dev.off()
+
+```
+
+```{r}
+# STM package
+all_stm <- convert(all_dfm, to = "stm")
+```
+
+```{r}
+# Model - Female
+topic_fem <- stm(documents = fem_stm$documents, 
+                 vocab = fem_stm$vocab, K = 20,
+                 prevalence = ~ journal + publicationYear,
+                 #content = ~ journal,
+                 data = fem_stm$meta,
+                 verbose = TRUE,
+                 init.type = "Spectral")
+
+plot(topic_fem)
+#cloud(topic_fem, topic = 41, scale = c(2,.25))
+
+# Model - Male
+topic_mal <- stm(documents = mal_stm$documents, 
+                 vocab = mal_stm$vocab, K = 20,
+                 prevalence = ~ journal + publicationYear,
+                 #content = ~ journal,
+                 data = mal_stm$meta,
+                 verbose = TRUE,
+                 init.type = "Spectral")
+
+plot(topic_mal)
+#cloud(topic_fem, topic = 41, scale = c(2,.25))
+```
+
+```{r}
+# Function for estimating topic models
+
+est_topics <- function(stm_obj, value_k){
+  topics_st <- stm(documents = stm_obj$documents, 
+                   vocab = stm_obj$vocab, 
+                   K = value_k,
+                   prevalence = ~ all_category + publicationYear + journal,
+                   #content = ~ all_category,
+                   data = stm_obj$meta,
+                   verbose = TRUE,
+                   init.type = "Spectral")
+  return(topics_st)
+}
+
+#plot(topic_all)
+#cloud(topic_fem, topic = 41, scale = c(2,.25))
+```
+Save (use formula to save same)
+```{r}
+name_of_model <- "all_01" # Change here
+path <- "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/"
+graphics.off
+
+pdf(file = paste0(path, name_of_model, ".pdf"),
+    width = 8, height = 8)
+  plot(topic_all) # Change here
+dev.off()
+
+
+saveRDS(topic_all, paste0(path, name_of_model, ".RDS")) # Change here
+```
+
+Upload a particular model
+```{r}
+# Upload
+#topic_all <- readRDS("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/all_01.RDS") # Change here
+```
+
+
+Choose number of topics (metrics)
+
+*Exclusivity calculation only designed for models without content covariates
+
+```{r}
+k_search1 <- searchK(documents = all_stm$documents, vocab = all_stm$vocab,
+                     K = c(15, 20, 25, 30, 35, 40, 45),
+                     init.type = "Spectral",
+                     prevalence = ~ all_category + publicationYear + journal,
+                     #content = ~ all_category,
+                     M = 10, 
+                     cores = 8, 
+                     data = all_stm$meta)	
+plot(k_search1)
+plot(k_search1$results$semcoh, k_search1$results$exclus)
+
+```
+
+```{r}
+# Graph semantic coherence and exclusivity
+num <- c(seq(15, 45, 5))
+topic_explore <- list()
+
+# Estimate Topic Models for each K
+for(k in num){
+  temp_model <- est_topics(all_stm, k)
+  topic_explore[[paste0("K_", k)]] <- temp_model
+}
+
+
+
+# Exclusivity and sem. coh. for each previous model
+exclus_semcoh <- list()
+for(i in num){
+  temp_df <- data.frame(K = c(1:i),
+                        met_ex = exclusivity(topic_explore[[paste0("K_", i)]]),
+                        met_se = semanticCoherence(topic_explore[[paste0("K_", i)]], all_stm$documents),
+                        Model = paste0("K = ", i))
+  exclus_semcoh[[paste0("K_", i)]] <- temp_df
+}
+
+# Dataframe for both metrics 
+exclus_semcoh_df <- data.frame()
+for(i in sort(num, decreasing = TRUE)){
+  exclus_semcoh_df <- bind_rows(exclus_semcoh_df, exclus_semcoh[[paste0("K_", i)]])
+}
+exclus_semcoh_df2 <- exclus_semcoh_df #%>% filter(Model != "K = 15", Model != "K = 45", Model != "K = 20", Model != "K = 25")
+ggplot(exclus_semcoh_df2, aes(met_se, met_ex, color = Model)) + geom_point(size = 2, alpha = 0.5) +  labs(x = "Semantic coherence", y = "Exclusivity") + scale_color_brewer(palette = "Paired")
+
+ggsave("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/topics_K.jpeg", 
+       width = 10, height = 5)
+```
+
+
+
+
+```{r}
+# Dataframe for average of both metrics 
+exclus_semcoh_avg_df <- data.frame(K = as.character(unlist(k_search1$results$K)),
+                                   met_se = unlist(k_search1$results$semcoh),
+                                   met_ex = unlist(k_search1$results$exclus))
+
+ggplot(exclus_semcoh_avg_df, aes(met_se, met_ex, color = K)) + geom_point() + theme_minimal() + labs(x = "Semantic coherence", y = "Exclusivity")
+```
+
+```{r save}
+saveRDS(k_search1, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/search_K2.RDS")
+saveRDS(topic_explore, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/all_est_topics2.RDS")
+```
+
+Choose number of topics (human judgement)
+
+```{r}
+# 30, 35 y 40
+
+# Save three plots
+name_of_model <- "all_02" # Change here
+path <- "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/"
+
+graphics.off()
+graphics.off()
+graphics.off()
+
+pdf(file = paste0(path, name_of_model, ".pdf"),
+    width = 16, height = 10)
+  par(mfrow = c(1, 3))
+  plot(topic_explore[["K_30"]], main = "Topic, K = 30")
+  plot(topic_explore[["K_35"]], main = "Topic, K = 35")
+  plot(topic_explore[["K_40"]], main = "Topic, K = 40")
+dev.off()
+
+```
+
+Predictions and further analysis
+
+```{r}
+topic40 <- topic_explore[["K_40"]] 
+
+# Model with topic content covariates
+topic40_wcontent <- stm(documents = all_stm$documents, 
+                         vocab = all_stm$vocab, 
+                         K = 40,
+                         prevalence = ~ all_category + publicationYear + journal,
+                         content = ~ all_category,
+                         data = all_stm$meta,
+                         verbose = TRUE,
+                         init.type = "Spectral")
+
+
+preds <- estimateEffect(1:40 ~ all_category + publicationYear, topic40_wcontent, meta = all_stm$meta, uncertainty = "Global")
+summary(preds)
+
+```
+
+```{r save}
+saveRDS(topic40, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/topic40.RDS")
+saveRDS(topic40_wcontent, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/topic40_wcontent.RDS")
+```
+
+*General plot*
+```{r}
+graphics.off()
+jpeg("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/topic_main_graph1.jpeg",
+     quality = 150, width = 960, height = 960, pointsize = 15)
+  plot(topic40_wcontent)
+dev.off()
+```
+
+```{r}
+# Topic proportion
+topic40_wcontent_gamma <- tidy(topic40_wcontent, matrix = "gamma") %>% 
+  group_by(topic) %>% summarise(gamma_mean = mean(gamma))
+```
+
+*Lollipop plot*
+
+```{r, fig.width = 4, fig.height= 8}
+preds_pointest <- get_effects(preds, variable = "all_category", type = "pointestimate")
+preds_pointest$value <- factor(preds_pointest$value,
+                               # First category will be used as reference category:
+                               levels = c("all_female", "nonalph_female", "alphab",
+                                          "nonalph_male", "all_male")) 
+preds_pointest$topic <- as.numeric(levels(preds_pointest$topic))[preds_pointest$topic]
+
+# Data frame for plot
+preds_point1 <- preds_pointest %>% mutate(labs = case_when(value == "all_female" ~ "W",
+                                                        value == "nonalph_female" ~ "W",
+                                                        value == "alphab" ~ "A",
+                                                        value == "nonalph_male" ~ "M",
+                                                        value == "all_male" ~ "M")) %>% 
+  group_by(value, topic) %>% mutate(fem = ifelse(value == "all_female", proportion, 0),
+                                    mal = ifelse(value == "all_male", proportion, 0)) 
+                                      
+preds_pointT <- preds_point1 %>% group_by(topic) %>% summarise(fem_tot = sum(fem), mal_tot = sum(mal),
+                                                               difference = abs(fem_tot - mal_tot)) 
+
+preds_point2 <- preds_point1 %>% left_join(preds_pointT, by = "topic") 
+
+#ggplot(preds_point2, aes(x = proportion, y = reorder(topic, fem_tot), color = value)) + geom_text(aes(label=labs), size = 4) + scale_color_brewer(palette = "PRGn")  + geom_line()
+
+# Labels
+topic40_words <- labelTopics(topic40_wcontent) # HERE, CHANGE TOPIC MODEL
+topic40_words_top <- data.frame(cbind(1:40), topic40_words$topics)
+colnames(topic40_words_top) <- c("topic", paste0("topword_", 1:7))
+topic40_words_top$full_label <- paste0("T", topic40_words_top$topic, ": ",
+                                       topic40_words_top$topword_1, ", ",
+                                       topic40_words_top$topword_2, ", ",
+                                       topic40_words_top$topword_3, sep = "")
+
+# Table for topics, its words and proportions
+fortable <- topic40_wcontent_gamma %>% left_join(topic40_words_top, by = "topic")
+write.csv(fortable, "/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/topics40_all_words and prop.csv")
+
+# Data frame
+preds_point3 <- preds_point2 %>% select(value, proportion, topic) %>% 
+  pivot_wider(names_from = value, values_from = proportion) %>%
+  left_join(topic40_words_top, by = "topic") %>% 
+  rowwise() %>%  #mutate(mean_fm = mean(c(all_female, all_male))) %>%  arrange(mean_fm) %>% 
+  mutate(bigg_fem = ifelse(all_female > all_male, 0, 1)) %>% 
+  arrange(bigg_fem, all_female) %>% 
+  mutate(full_label = factor(full_label, full_label))
+
+facet_names <- c(`0` = "Topics favoured by women", `1` = "Topics favoured by men")
+
+write.csv(preds_point3, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/preds_topics_allcats.csv")
+
+# Plot
+ggplot(preds_point3) +
+  geom_segment(aes(x = full_label, xend = full_label, y = all_male, yend = all_female), color = "black") +
+  geom_point(aes(x = full_label, y = all_male), color = "grey30", size = 4) +
+  geom_point(aes(x = full_label, y = all_female), color = "firebrick", size = 4 ) +
+  geom_point(aes(x = full_label, y = alphab), color = "darkorange", size = 4, alpha = 0.8 , shape = 1) +
+  geom_point(aes(x = full_label, y = nonalph_female), color = "firebrick",size = 4,alpha = 0.8 , shape = 1) +
+  geom_point(aes(x = full_label, y = nonalph_male), color = "grey30", size = 4, alpha = 0.8 , shape = 1) +
+  coord_flip() +
+  theme(text = element_text(size=22), axis.text.x = element_text(size = 12), legend.position="bottom")  +
+  ylab("Proportion") + xlab("Topics") + scale_color_discrete(name = "New Name") +
+  facet_wrap( ~ bigg_fem, ncol = 1, scales = "free_y", labeller = as_labeller(facet_names)) #+ scale_x_discrete(position = "top") 
+
+ggsave("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/topic_graph1_Content.png",
+       width = 14, height = 20)
+```
+
+```{r}
+# 30, 35 y 40
+
+# Save three plots
+name_of_model2 <- "test0" # Change here
+path <- "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/"
+
+graphics.off()
+graphics.off()
+graphics.off()
+
+pdf(file = paste0(path, name_of_model2, ".pdf"),
+    width = 16, height = 40)
+  plot(preds, "all_category", model = topic_all, method = "pointestimate")
+dev.off()
+
+```
+
+*Words used in same topics by gender*
+
+```{r}
+sametopic_gender <- c(34, 16, 13, 30, 29, 38, 18, 22)
+
+#i <- sametopic_gender[1]
+for(i in sametopic_gender){
+  graphics.off()
+  png(file = paste0("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/topics_words/topic40content_word", 
+                     i, ".png", sep = ""), width = 1500, height = 580)
+    plot(topic40_wcontent, type = "perspectives", topics = i,
+       family = "", covarlevels = c("all_female", "all_male"), plabels = c("Women", "Men"),
+       text.cex = 3.5, main = paste0("Topic", i, sep = " "))
+  dev.off()
+}
+```
+
+
+*Analysis of quant topics*
+
+```{r}
+topic40wc_theta <- topic40_wcontent$theta
+main_topic <- c()
+second_top_topic <- c()
+for(i in 1:nrow(topic40wc_theta)){
+  temp_row <- topic40wc_theta[i,]
+  temp_top <- which.max(temp_row)
+  temp_sec <- which.max(temp_row[temp_row != max(temp_row)])
+  main_topic <- append(main_topic, temp_top)
+  second_top_topic <- append(second_top_topic, temp_sec)
+}
+
+which.max(table(main_topic))
+table(main_topic)
+6386/31171
+```
+
+```{r}
+df_both$main_topic <- main_topic
+df_both$sec_topic <- second_top_topic
+only_quant <- df_both %>% filter(main_topic == 36| main_topic == 38 | main_topic == 21)
+
+# Proportion of articles dedicated to quant by category
+table(df_both$all_category) / table(only_quant$all_category)
+
+table(only_quant$main_topic, only_quant$all_category)
+
+dictionary <- readRDS("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/dictionary/dictionary.RDS")
+#corpus_to_dfm
+
+# DFm to apply dictionary
+vars_all <- c("title", "info", "all_category", "publicationYear", "journal", "tdmCategory_1", "sourceCategory_1")
+quant_corpus <- corpus(only_quant$abstract, docvars = only_quant[, vars_all])
+quant_dict_dfm <- dfm(quant_corpus, dictionary = dictionary)
+quant_dict_df0 <- convert(quant_dict_dfm, to = "data.frame")
+
+  # From here on, same as dictionary code
+quant_dict_df0 <- quant_dict_df0[-1]
+quant_dict_df0$intersec <- rowSums(quant_dict_df0)
+quant_dict_df <- cbind(only_quant, quant_dict_df0) # bind dataset and dict
+
+grade_intersec0 <- data.frame(prop.table(table(quant_dict_df$all_category, quant_dict_df$intersec), 1))
+colnames(grade_intersec0) <- c("gender", "degree", "pct")
+grade_intersec0$degree <- as.character(grade_intersec0$degree)
+grade_intersec <- grade_intersec0 %>%  
+  mutate(degree = case_when(degree %in% c("5", "6", "7", "8") ~ "+5", degree == "0" ~ "None", TRUE ~ degree)) %>% 
+  group_by(gender, degree) %>% summarise(pct = sum(pct))
+vec_degrees <- c("None", "1", "2", "3", "4", "+5")
+grade_intersec$degree <- factor(grade_intersec$degree, levels = rev(vec_degrees))
+
+grade_intersec$gender <- factor(grade_intersec$gender, 
+                                levels = c("all_female", "nonalph_female", "alphab", "nonalph_male" , "all_male"))
+labels_gender <- c("Only women", "Mixed - lead women", "Mixed - alphabetical", "Mixed - lead men", "Only men")
+colors_gender <- c("all_female" = "firebrick", "all_male" = "grey30", 
+                   "alphab" = "rosybrown", "nonalph_female" = "tomato3", 
+                   "nonalph_male" = "grey69")
+# Option A
+ggplot(grade_intersec, aes(fill = gender, y = pct, x = degree)) + 
+  geom_bar(position="dodge", stat="identity") + coord_flip() + 
+  ylab("Percentage") + xlab("Number of intersections") + scale_y_continuous(labels = scales::percent) + 
+  scale_fill_manual("Gender", values = colors_gender, labels = labels_gender) + 
+  theme(legend.position = "bottom", axis.text.y = element_text(size=12),
+        axis.text.x = element_text(size=12), legend.text = element_text(size=11),
+        axis.title.x = element_text(size=11), axis.title.y = element_text(size=11)) 
+```
+
+```{r}
+# Analysis by each intersection
+dict_cats <- colnames(quant_dict_df)[startsWith(colnames(quant_dict_df), "dict_")]
+
+prop_cats <- quant_dict_df %>% select(all_category, dict_cats, ) %>% 
+  mutate(all_category = case_when(all_category != "all_female" & all_category != "all_male" ~ "mixed", 
+                                  TRUE ~ all_category)) %>%  group_by(all_category) %>% 
+  summarise_all(funs(sum)) %>% 
+  pivot_longer(cols = starts_with("dict_"), names_to = "category", values_to = "num") %>% 
+  group_by(all_category) %>% mutate(prop = num / sum(num))
+```
+
+*Graph for third results*
+```{r}
+table(quant_dict_df$sec_topic, quant_dict_df$all_category) 
+
+# Average intersections
+quant_dict_df %>% filter(sec_topic == 37 | sec_topic == 14 | sec_topic == 5) %>% 
+  group_by(all_category, sec_topic) %>% summarise(inter_avg = mean(intersec), tot_arts = n())
+
+# Top intersections                                              
+topinters <- quant_dict_df %>% filter(sec_topic == 37 | sec_topic == 14 | sec_topic == 5) %>% 
+  group_by(all_category, sec_topic) %>% select(starts_with("dict_")) 
+colSums(topinters[topinters$all_category == "all_female" & topinters$sec_topic == 37, -c(1:2)])
+colSums(topinters[topinters$all_category == "all_male" & topinters$sec_topic == 37, -c(1:2)])
+
+colSums(topinters[topinters$all_category == "all_female" & topinters$sec_topic == 14, -c(1:2)])
+colSums(topinters[topinters$all_category == "all_male" & topinters$sec_topic == 14, -c(1:2)])
+
+colSums(topinters[topinters$all_category == "all_female" & topinters$sec_topic == 5, -c(1:2)])
+colSums(topinters[topinters$all_category == "all_male" & topinters$sec_topic == 5, -c(1:2)])
+```
+
+sources:
+https://www.r-graph-gallery.com/303-lollipop-plot-with-2-values.html

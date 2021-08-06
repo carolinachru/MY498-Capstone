@@ -1,0 +1,265 @@
+---
+title: "5. Gender preprocessing
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Processing databases that have already identified the gender for authors.
+
+__Just as before, to proceed with the gender identification, the initial data set (all_nograms_raw.RDS) is filtered so I stay with only those articles which have abstract.__
+
+```{r}
+library(jsonlite)
+library(dplyr)
+library(readtext)
+library(stringr)
+library(stringi)
+library(tidyr)
+library(cld3)
+library(cld2)
+library(textcat)
+```
+
+```{r}
+# Read
+df_both0 <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/final_gender_both.csv")
+df_gen0 <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/final_gender_Pgender.csv")
+df_gC0 <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/final_gender_PgenderC.csv")
+
+```
+
+Merge with the rest of the information
+
+```{r}
+data_raw <- readRDS("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_nograms_raw.RDS")
+sum(!is.na(data_raw$abstract)) # Num of non-NA abstracts
+data_raw1 <- data_raw[is.na(data_raw$abstract) == FALSE,] # Filter if it does not have an abstract
+
+df_both <- df_both0 %>% left_join(data_raw1, by = "id") %>% select(-paste0("creator_", 1:62))
+df_gen <- df_gen0 %>% left_join(data_raw1, by = "id") %>% select(-paste0("creator_", 1:62))
+df_gC <- df_gen0 %>% left_join(data_raw1, by = "id") %>% select(-paste0("creator_", 1:62))
+
+```
+
+Detect language
+```{r}
+# Package cld2 ("en")
+df_both$language_both <- cld2::detect_language(df_both$abstract)
+df_gen$language_gen <- cld2::detect_language(df_gen$abstract)
+df_gC$language_gC <- cld2::detect_language(df_gC$abstract)
+
+# Package cld3 ("en")
+df_both$language_both2 <- cld3::detect_language(df_both$abstract)
+df_gen$language_gen2 <- cld3::detect_language(df_gen$abstract)
+df_gC$language_gC2 <- cld3::detect_language(df_gC$abstract)
+```
+
+- With textcat, journals
+
+```{r}
+# Remove non-english abstracts
+df_both1 <- df_both %>% filter(language_both == "en" & language_both2 == "en") 
+df_gen1 <- df_gen %>% filter(language_gen == "en" & language_gen2 == "en")
+df_gC1 <- df_gC %>% filter(language_gC == "en" & language_gC2 == "en")
+```
+
+cld2 is better for journals. 2 problems: if mix language (example, "Amerikastudien / American Studies"), then it says english -> solution: drop journals with "/". also, there are others which are NA that are important such as "Econometrica". solution: this manually.
+
+```{r}
+# Remove non-english journals, function
+clean_journals <- function(df){
+  journals <- data.frame(table(df$isPartOf))
+  journals$title <- as.character(journals$Var1)
+  journals$lang3 <- cld3::detect_language(journals$title)
+  journals$lang2 <- cld2::detect_language(journals$title)
+  journals$joint <- str_detect(journals$title, "\\/")
+  
+  # Keep if english or NA, drop if it has "/"
+  journals_fin <- journals %>% filter(joint == FALSE & (lang2 == "en" | is.na(lang2))) %>% select(-joint)
+  
+  return(journals_fin)
+}
+
+journals_both0 <- clean_journals(df_both1)
+journals_gC0 <- clean_journals(df_gC1)
+journals_gen0 <- clean_journals(df_gen1)
+```
+
+
+```{r}
+# Manually check for NA language, all three datasets
+all_na_journals <- c(journals_both0$title[is.na(journals_both0$lang2)],
+                  journals_gC0$title[is.na(journals_gC0$lang2)],
+                  journals_gen0$title[is.na(journals_gen0$lang2)])
+all_na_journals <- names(table(all_na_journals))
+```
+
+Using `all_na_journals` object, an Excel file is created for classification. The results are the following:
+
+```{r}
+# Upload the manually classificated articles
+na_journals <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/journals_manual.csv")
+```
+
+Remove journals not in english
+```{r}
+# Journals with NA (cld2) to keep
+na_journals_keep <- na_journals %>% filter(english == "Yes")
+na_journals_keep <- na_journals_keep$name
+
+# Journals in english (cld2) to keep
+all_eng_journals <- c(journals_both0$title[journals_both0$lang2 == "en"],
+                      journals_gC0$title[journals_gC0$lang2 == "en"],
+                      journals_gen0$title[journals_gen0$lang2 == "en"])
+eng_journals_keep <- names(table(all_eng_journals))
+
+fin_journals_keep <- c(na_journals_keep, eng_journals_keep)
+
+# Both
+journal_clean <- function(df){
+  df_final <- df %>% mutate(isPartOf_eng = ifelse(isPartOf %in% fin_journals_keep, TRUE, FALSE)) %>% 
+    filter(isPartOf_eng == TRUE) %>% rename(journal = isPartOf) %>% select(-isPartOf_eng)
+  return(df_final)
+}
+df_both2 <- journal_clean(df_both1)
+df_gC2 <- journal_clean(df_gC1)
+df_gen2 <- journal_clean(df_gen1)
+
+```
+
+Cleaning by tdmCategory and sourceCategory
+
+What is the difference? 
+- tdmCategory:	the inferred category of the content based on machine learning
+- sourceCategory:	the category according to the provider
+
+```{r}
+# Same categories for each 3 datasets (both, gen and gC)
+tdm0 <- df_both1 %>% select(starts_with("tdmC"))
+source0 <- df_both1 %>% select(starts_with("sourceC"))
+tdm_vec <- as.vector(as.matrix(tdm0))
+source_vec <- as.vector(as.matrix(source0))
+
+tdm_unique <- names(table(tdm_vec))
+source_unique <- data.frame(table(source_vec))
+```
+
+```{r}
+# Upload the manually classificated articles
+source_ca <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/sourcecategory_manual.csv")
+```
+
+Control for economics literature.
+
+- if all sourceCategory_* not relevant, drop.
+- if sourceCat NA, but tdm econ/politics/social ok.
+- if at least one sourceCategory_* not relevant, but tdm econ/politics/social ok
+
+```{r}
+# Finally selected categories
+source_ca <- source_ca$source_cat[source_ca$social_sci == TRUE]
+source_ca <- iconv(source_ca, from = 'UTF-8', to = 'ASCII//TRANSLIT')
+
+# Function for selecting non-relevant categories
+category_clean <- function(df0, vec){
+  df <- df0
+  vars_source <- df %>% select(starts_with("sourceC")) 
+  df_source <- sapply(vars_source, 
+                  function(x){ifelse(is.na(x), NA, ifelse(x %in% vec, TRUE, FALSE))}) # If it is, TRUE
+  df$source_rel <- rowSums(df_source, na.rm = TRUE)
+  df$source_tot <- rowSums(!is.na(df_source))
+  df$source_tot_na <- ifelse(rowSums(is.na(df_source)) == 10, TRUE, FALSE)
+  df$tdm_econ <- str_detect(df$tdmCategory_1, "(Economics)|(Political)|(Social)")
+  df$tdm_econ2 <- str_detect(df$tdmCategory_2, "(Economics)|(Political)|(Social)")
+  df <- df %>% mutate(unrel = case_when(source_rel == 0 & source_tot_na == FALSE ~ "drop",
+                                       (source_rel < source_tot) & source_tot_na == FALSE & 
+                                         tdm_econ == FALSE & tdm_econ2 == FALSE ~ "drop",
+                                       source_tot == TRUE & tdm_econ == FALSE & tdm_econ2 == FALSE ~ "drop"))
+  return(df)
+}
+df_both3 <- category_clean(df_both2, source_ca)
+df_gen3 <- category_clean(df_gen2, source_ca)
+df_gC3 <- category_clean(df_gC2, source_ca)
+
+
+```
+
+Several articles which start the abstract variable with "ABSTRACT", "Abstract", "ABSTRACT."
+
+```{r}
+# Function to clean abstract
+# Remove the word "abstract" from abstracts
+abstract_clean <- function(df0){
+  df <- df0
+  
+  # Identify all forms that the word "abstract" exists
+  abstracts <- df %>% 
+    mutate(starts = str_extract(abstract, "^((Abstract)|(ABSTRACT)|(abstract))[[:punct:]]*")) %>%
+    select(starts)
+  abstracts_pres <- names(table(abstracts))
+
+  # Substitute each case
+  for(i in 1:length(abstracts_pres)){
+    df$abstract <- sub(abstracts_pres[i], "", df$abstract, fixed = TRUE)
+  }
+  # Clean punctuation left or leading white space 
+  df$abstract <- sub("^[[:punct:]]?", "", df$abstract)
+  df$abstract <- trimws(df$abstrac, which = "left")
+  
+  return(df)
+}
+
+df_both4 <- abstract_clean(df_both3)
+df_gen4 <- abstract_clean(df_gen3)
+df_gC4 <- abstract_clean(df_gC3)
+
+```
+
+Save
+
+```{r}
+write.csv(df_both4, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/final_bothP.csv")
+write.csv(df_gen4, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/final_Pgender.csv")
+write.csv(df_gC4, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/final_PgenderC.csv")
+```
+
+```{r command_test}
+# Remove non-english journals
+journals_both <- data.frame(table(df_both1$isPartOf))
+journals_both$title <- as.character(journals_both$Var1)
+journals_both$lang3 <- cld3::detect_language(journals_both$title)
+journals_both$lang2 <- cld2::detect_language(journals_both$title)
+journals_both$joint <- str_detect(journals_both$title, "\\/")
+journals_both_fin <- journals_both %>% filter(joint == FALSE & (lang2 == "en" | is.na(lang2)))
+
+# Evaluate sourceCat
+df_both2_B <- df_both2
+vars_source <- df_both2_B %>% select(starts_with("sourceC"))
+test0 <- sapply(vars_source, 
+                function(x){ifelse(is.na(x), NA, ifelse(x %in% source_ca, TRUE, FALSE))}) # TRUE, si esta
+df_both2_B$source_rel <- rowSums(test0, na.rm = TRUE)
+df_both2_B$source_tot <- rowSums(!is.na(test0))
+df_both2_B$tdm_econ <- str_detect(df_both2_B$tdmCategory_1, "(Economics)|(Political)|(Social)")
+df_both2_2 <- df_both2_B %>% mutate(unrel = case_when(source_rel == 0 ~ "drop",
+                                        (source_rel < source_tot) & tdm_econ == FALSE ~ "drop"))
+
+# Clean abstract
+abstracts <- df_both3 %>% mutate(starts = str_extract(abstract, "^((Abstract)|(ABSTRACT)|(abstract))[[:punct:]]*")) %>% select(starts)
+abstracts_pres <- names(table(abstracts))
+
+test0 <- df_both3[!(is.na(abstracts)), c("id", "abstract")]
+# Substitute each case
+for(i in 1:length(abstracts_pres)){
+  test0$abstract <- sub(abstracts_pres[i], "", test0$abstract, fixed = TRUE)
+}
+# Clean punctuation left or leading white space 
+test0$abstract <- sub("^[[:punct:]]?", "", test0$abstract)
+test0$abstract <- trimws(test0$abstrac, which = "left")
+
+
+  
+test0 <- df_both3[!(is.na(abstracts)), c("id", "abstract")]
+```

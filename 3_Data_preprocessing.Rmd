@@ -1,0 +1,269 @@
+---
+title: "3. Data preprocessing
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Processing database from previous step to arrive to a database which has each name for each article.
+
+At the end, I arrive to two databases: one with only first names per authors of articles, and other that has last names as well. Analysis was done on the further step to explore whether the Python's gender APIs gains more information by using last name or not.
+
+*To proceed with the gender identification, the initial data set (all_nograms_raw.RDS) is filtered so I stay with only those articles which have abstract.*
+
+```{r}
+library(jsonlite)
+library(dplyr)
+library(readtext)
+library(stringr)
+library(stringi)
+```
+
+*Load raw file*
+
+```{r}
+data_raw <- readRDS("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_nograms_raw.RDS")
+head(data_raw)
+
+sum(!is.na(data_raw$abstract)) # Num of non-NA abstracts
+
+# Filter if it does not have an abstract
+data_raw1 <- data_raw[is.na(data_raw$abstract) == FALSE,] 
+
+sum(is.na(data_raw$id)) # Num of NA id
+n_distinct(data_raw$id) == nrow(data_raw) # Duplicates? If true, then no duplicates
+
+# Select dataframe only for authors
+data_authors <- data_raw1 %>% select(id, starts_with("creator_"))
+```
+```{r}
+# How many authors?
+sum(!is.na(data_authors[,-c(1)]))
+sum(is.na(data_authors[,-c(1)]))
+
+# (3477608 + 112502) - (62*57905) = 0 ==> calculo anterior correcto
+```
+
+
+### Extract first names
+
+It seems we have the following cases in names:
+
+(1) No first names: "R. J. Chelliah", "H. Öztaş Ayhan"
+(2) One first name explicit, the other abbreviated: "Jennifer S. Haas", "RICHARD P. Barth", "M. Martin Boyer", "Paul G. J. O'Connell"
+(3) One first name and one last name:  "Paul Hickman", "Kofi K. Nkrumah-Young"  
+(4) Three names (indistinct whether one is first or last name): "Susan Tinsley Gooden", "Laura Parte Esteban", 
+(5) Not names but institutions: "EPW Research Foundation", "South Centre"
+
+As such, create one variable per "creator" (author) so that first this is identified. This helps creating a specific function to see how names are being extracted. Also, to identify those names which do not fall on any of those cases.
+
+Paths: 
+- If 2 words, extract the first.
+- If +2 words, extract first 2.
+
+Clean-up:
+- If just one letter or letter with ".", omit.
+
+
+```{r}
+# Overview
+sample(data_authors$creator_1, 100, replace = FALSE)
+```
+
+**Database for first name**
+
+```{r}
+# Test text for extraction
+test0 <- c("R J. Chelliah", "H. Öztaş Ayhan", "Jennifer S. Haas", "M. Martin Boyer", "Paul G. J. O'Connell",
+           "Kofi K. Nkrumah-Young", "Paul Hickman", "Susan Tinsley Gooden", "Laura Parte Esteban", "C. M Chavez",
+           "Hans van Meijl", "Hans van Meijl", "Wynand P. M. M. van de Yen", "Jennifer Van Hook", "K.", "Carolina C.", "Carolina C", "Paul Hickman", "Paul G. J. O'Connell")
+
+
+# Function for extraction of first name
+extract_firstname <- function(astring){
+  temp_length <- str_count(astring, " ") + 1
+  first_name <- ifelse(temp_length <= 2, word(astring, start = 1), word(astring, start = 1, end = 2)) # Extract
+  
+  first_name <- gsub("[[:space:]]((VAN)|(van))\\>", " ", first_name)
+  first_name <- gsub("[[:space:]]((DE)|(de))\\>", " ", first_name)
+  first_name <- gsub("[[:space:]]((DER)|(der))\\>", " ", first_name)
+  first_name <- gsub("[[:space:]]((VON)|(von))\\>", " ", first_name)
+  first_name <- gsub("[[:space:]]((LA)|(la))\\>", " ", first_name)
+  first_name <- gsub("[[:space:]]((DI)|(di))\\>", " ", first_name)
+  first_name <- gsub("[[:space:]]((JR)|(Jr)|(Jr\\.)|(JR\\.))\\>", " ", first_name)  
+  
+  first_name <- gsub("\\<+[A-z](\\.)?[[:blank:]]", "", first_name) # Drop abbreviations like J. or G (beginning)
+  first_name <- gsub("[[:space:]]*[A-Z](\\.)?$", "", first_name) # Drop abbreviations like J. or G (at the end)
+  first_name <- trimws(first_name) # Remove leading or trailing blank space
+  return(first_name)
+}
+
+# Application (to final data)
+data_authors1 <- sapply(data_authors[, -c(1)], extract_firstname)
+data_authors1 <- data.frame(data_authors[,1], data_authors1)
+
+# Data cleaning
+data_authors2 <- data_authors1
+data_authors2[data_authors1 == ""] <- NA
+
+# Save dataframe of names
+write.csv(data_authors2, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_firstname.csv")
+write.csv(data_authors, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_allname.csv")
+```
+
+
+### Extract author's order 
+
+**Database for author's descriptive statistics**
+
+Database contains:
+
+- Number of authors in raw file
+- Number of authors after last processing
+- Alphabetically ordered or not
+  - Case 1: using all last words
+  - Case 2: if full name +3 words, then check 2nd from last
+  
+In case 2, the componentes "van" (e.g., van Berg) and "de" (e.g., de Alba) are removed if all letters are lower (van, de) or upper (VAN, DER). If the first letter is upper and following lower, then it is counted as a last name. This because in some sources, it said depending by country sometimes the components are taken as lastnames and other just as components. In this sense, I will 'respect' the reporting by authors.
+  Source: https://academia.stackexchange.com/questions/8870/how-should-van-names-be-ordered-in-a-bibliography
+  
+  Other agregaciones se vieron como "der" and "von". This is a potential problem. also, Jr. JR or Jr
+
+```{r}
+alphab_ordering <- function(df){
+  
+  obs <- nrow(df)
+  final_df <- data.frame()
+  
+  # Row by row processing information
+  for(i in 1:obs){
+    temp_row <- as.character(df[i,-c(1)])
+    
+    # Number of authors
+    not_na <- sum(!is.na(temp_row))
+    
+    # Clean names
+    clean_names <- gsub("[[:space:]]((VAN)|(van))[[:space:]]", " ", temp_row)
+    clean_names <- gsub("[[:space:]]((DE)|(de))[[:space:]]", " ", clean_names)
+    clean_names <- gsub("[[:space:]]((DER)|(der))[[:space:]]", " ", clean_names)
+    clean_names <- gsub("[[:space:]]((VON)|(von))[[:space:]]", " ", clean_names)
+    clean_names <- gsub("[[:space:]]((LA)|(la))[[:space:]]", " ", clean_names)
+    clean_names <- gsub("[[:space:]]((DI)|(di))[[:space:]]", " ", clean_names)
+    clean_names <- gsub("[[:space:]]((JR)|(Jr)|(Jr\\.)|(JR\\.))\\>", " ", clean_names)
+    
+    clean_names <- gsub("\\<+[A-z](\\.)?[[:blank:]]", "", clean_names) # Names without the A. or A
+    clean_names <- str_replace_all(clean_names, "  ", " ") # Remove double spaces
+
+    # Letter from last name
+    lastname <- word(clean_names, start = -1)
+    
+    # Alphabetical - CASE 1
+    alphab_case1 <- ifelse(not_na == 1, NA, 
+                           ifelse(identical(lastname[1:not_na], sort(lastname)), TRUE, FALSE))
+    
+    # Alphabetical - CASE 2
+    name_len <- sapply(strsplit(clean_names[1:not_na], " "), length) # Length
+    lastname_case2 <- ifelse(name_len > 2, 
+                                    word(clean_names[1:not_na], start = -2),
+                                    word(clean_names[1:not_na], start = -1))
+    alphab_case2 <- ifelse(not_na == 1, NA, 
+                           ifelse(identical(lastname_case2, sort(lastname_case2)), TRUE, FALSE))
+    
+    # Last names used
+    names(lastname) <- paste0("lastname_c1_", 1:62)
+    names(clean_names) <- paste0("lastname_c2_", 1:62)
+    last_names_cases <- data.frame(as.list(c(lastname, clean_names)))
+    
+    # All original names
+    names(temp_row) <- paste0("allname_", 1:62) 
+    temp_row_df <- data.frame(as.list(temp_row))
+    
+    # Final database
+    temp_df0 <- data.frame(id = df[i,1],
+                          num_authors = not_na,
+                          alpha_case1 = alphab_case1,
+                          alpha_case2 = alphab_case2)
+    temp_df <- bind_cols(temp_df0, temp_row_df) # Initial names
+    final_df <- bind_rows(final_df, temp_df)
+  }
+  
+  return(final_df)
+}
+
+#data_authors100_alpha <- alphab_ordering(data_authors100)
+data_authors_alphab <- alphab_ordering(data_authors)
+
+# Final data
+write.csv(data_authors_alphab, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_alphab.csv")
+
+```
+
+### Command testing
+
+```{r}
+data_authors100 <- data_authors[1:100,]
+y <- as.character(data_authors100[7,-c(1)])
+
+# Number of authors 
+not_na <- sum(!is.na(y))
+
+# Clean last name
+clean_names <- gsub("[[:space:]]((VAN)|(van))[[:space:]]", " ", y)
+clean_names <- gsub("[[:space:]]((DE)|(de))[[:space:]]", " ", clean_names)
+clean_names <- gsub("\\<+[A-z](\\.)?[[:blank:]]", "", clean_names) # Names without the A. or A
+clean_names <- str_replace_all(clean_names, "  ", " ") # Remove double spaces
+
+# Letter from last name
+lastname <- word(clean_names, start = -1)
+
+# Alphabetical - CASE 1
+alphab_case1 <- ifelse(not_na == 1, NA, 
+                       ifelse(identical(lastname[1:not_na], sort(lastname)), TRUE, FALSE))
+
+# Alphabetical - CASE 2
+name_len <- sapply(strsplit(clean_names[1:not_na], " "), length) # Length
+lastname_case2 <- ifelse(name_len > 2, 
+                                word(clean_names[1:not_na], start = -2), #aquii
+                                word(clean_names[1:not_na], start = -1))
+alphab_case2 <- ifelse(not_na == 1, NA, 
+                       ifelse(identical(lastname_case2, sort(lastname_case2)), TRUE, FALSE))
+
+
+
+# Function for counting number of authors (raw)
+
+# Function for counting number of used authors
+
+# Function for determining if alphabetically ordered or not
+```
+
+```{r commands-test}
+# Identify total world length
+str_count(test0, " ") + 1
+
+# Identify first and second words
+word(test0, start = 1, end = 2)
+
+# Identify J. or J abbreviations
+str_extract(test0,"[A-z]*[.]")
+
+# Identify last word
+word(test0, start = -1)
+
+# Identify letter from last name
+str_extract(word(test0, start = -1), "^[A-Z]")
+
+# About "van" and "de"
+test1 <- c("ARMIN VAN BURREN Delta DELTA", "Hans van Meijl", "Hans van Meijl", 
+           "Evan YAN", "Jennifer Van Hook Vandel", 
+           "Ola de Alba", "OLA DE MUHOC", "Hola De Joy")
+test2 <- c("Kelvin Choi", "Deborah J Hennrikus", "Jean L Forster", "Molly Moilanen")
+
+# Extract de or DE, or van or VAN
+str_extract(test1, "[[:space:]]((VAN)|(van))[[:space:]]")
+```
+
+
+

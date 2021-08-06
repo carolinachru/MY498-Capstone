@@ -1,0 +1,500 @@
+---
+title: "5. Gender preprocessing
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Processing databases that have already identified the gender for authors.
+
+__Just as before, to proceed with the gender identification, the initial data set (all_nograms_raw.RDS) is filtered so I stay with only those articles which have abstract.__
+
+```{r}
+library(jsonlite)
+library(dplyr)
+library(readtext)
+library(stringr)
+library(stringi)
+library(tidyr)
+```
+
+*Load raw file*
+
+```{r}
+data_raw <- readRDS("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_nograms_raw.RDS")
+data_raw0 <- data_raw[is.na(data_raw$abstract) == FALSE,] # Filter if it does not have an abstract
+```
+
+*Load files*
+
+With gender identification
+```{r}
+# Using the package genderComputer
+gender_id_first_PgenderC <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_firstn_gender_PgenderComputer.csv", header = FALSE, stringsAsFactors = FALSE) # First names
+
+#gender_id_all_PgenderC <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_alln_gender_PgenderComputer.csv", header = FALSE, stringsAsFactors = FALSE) # First and last name
+
+# Using the package gender
+gender_id_first_Pgender <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_firstn_gender_Pgender.csv", header = FALSE, stringsAsFactors = FALSE) # First names
+
+#gender_id_all_Pgender <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_alln_gender_Pgender.csv", header = FALSE, stringsAsFactors = FALSE) # First and last name
+
+```
+
+```{r}
+# Minor modifications to bases
+names <- c("id", paste0("author_", 1:62))
+colnames(gender_id_first_PgenderC) <- names
+colnames(gender_id_first_Pgender) <- names
+
+# Database construction
+gender_id_first_Pgender[gender_id_first_Pgender == "f"] <- "female"
+gender_id_first_Pgender[gender_id_first_Pgender == "m"] <- "male"
+
+gender_id_first_Pgender[gender_id_first_Pgender == "NA"] <- NA
+gender_id_first_PgenderC[gender_id_first_PgenderC == "NA"] <- NA
+```
+
+With alphabetical classification
+```{r}
+data_authors_alphab <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_alphab.csv", header = TRUE, stringsAsFactors = FALSE)
+
+```
+
+
+```{r}
+tot_gender <- c()
+tot_genderC <- c()
+
+for(i in 2:ncol(gender_id_first_PgenderC)){
+  fem <- sum(gender_id_first_Pgender[,c(i)] == "female", na.rm = TRUE)
+  mal <- sum(gender_id_first_Pgender[,c(i)] == "male", na.rm = TRUE)
+  non <- sum(gender_id_first_Pgender[,c(i)] == "None", na.rm = TRUE)
+  na <- sum(is.na(gender_id_first_Pgender[,c(i)]))
+  temp1 <- c(fem, mal, non, na)
+  
+  fem2 <- sum(gender_id_first_PgenderC[,c(i)] == "female", na.rm = TRUE)
+  mal2 <- sum(gender_id_first_PgenderC[,c(i)] == "male", na.rm = TRUE)
+  uni2 <- sum(gender_id_first_PgenderC[,c(i)] == "unisex", na.rm = TRUE)
+  non2 <- sum(gender_id_first_PgenderC[,c(i)] == "None", na.rm = TRUE)
+  na2 <- sum(is.na(gender_id_first_PgenderC[,c(i)]))
+  temp2 <- c(fem2, mal2, uni2, non2, na2)
+  
+  tot_gender <- rbind(tot_gender, temp1)
+  tot_genderC <- rbind(tot_genderC, temp2)
+}
+
+tot_gender <- data.frame(tot_gender)
+tot_genderC <- data.frame(tot_genderC)
+```
+
+=> Including last names increases the identification of genders, this is seen in the increase for both methods of 'None'. But also, we have NA for gender_id_first_Pgender, so that it is because we don't have a first name!
+
+### Comparisons of results from using the gender APIs
+
+*Overview of differences*
+
+```{r}
+scan_genders <- data.frame(id = data_raw$id,
+                           original = data_raw$creator_1,
+                           gender = gender_id_all_Pgender$author_1,
+                           gender_first = gender_id_first_Pgender$author_1,
+                           genderC = gender_id_all_PgenderC$author_1,
+                           genderC_first = gender_id_first_PgenderC$author_1)
+scan_genders2 <- scan_genders %>% mutate(gender = case_when(gender == "f" ~ "female",
+                                                           gender == "m" ~ "male",
+                                                           TRUE ~ as.character(gender_first)),
+                                        gender_first = case_when(gender_first == "f" ~ "female",
+                                                           gender_first == "m" ~ "male",
+                                                           TRUE ~ as.character(gender_first)))
+
+sum(scan_genders2$gender_first != scan_genders2$genderC_first, na.rm = TRUE) # Number of disagreeing authors
+sum(scan_genders2$gender_first == scan_genders2$genderC_first, na.rm = TRUE) # Number of agreeing authors
+```
+
+
+*Scan of identified names*
+
+```{r}
+#sum(is.na(scan_genders2$id)) 
+#scan_genders2$id <- as.character(scan_genders$id)
+#scan_genders2 <- scan_genders2[scan_genders2$id != "NA",]
+#sum(is.na(scan_genders2$original)) # Is zero, something is happening after # chance es eso de arriba
+
+# Comparisons - Part 1
+
+diff_gender <- scan_genders2[scan_genders2$gender != scan_genders2$gender_first,] 
+diff_gender2 <- scan_genders2[(scan_genders2$gender != scan_genders2$gender_first) & 
+                              (scan_genders2$gender != "None") &
+                              (scan_genders2$gender_first != "None"),]
+table(diff_gender2$gender, diff_gender2$gender_first, useNA = "always") # 3 differ
+
+# Now, to see those 3 unmatched:
+#View(scan_genders2[(diff_gender2$gender == "female") & (diff_gender2$gender_first == "male"),])
+
+
+# Comparisons - Part 2
+diff_gender3 <- scan_genders2[scan_genders2$gender_first != scan_genders2$genderC_first,] 
+
+table(diff_gender3$gender_first, diff_gender3$genderC_first, useNA = "always")
+
+# Different genders
+diff_gender4 <- scan_genders2[(scan_genders2$gender_first == "female" 
+                               & scan_genders2$genderC_first == "male") 
+                              | (scan_genders2$gender_first == "male" & 
+                                   scan_genders2$genderC_first == "female"),]
+
+# Unisex
+diff_gender5 <- scan_genders2[(scan_genders2$genderC_first == "unisex" 
+                               & scan_genders2$gender_first == "male") 
+                              | (scan_genders2$genderC_first == "unisex" & 
+                                   scan_genders2$genderc_first == "female"),]
+sapply(diff_gender5, function(x){sum(is.na(x))})
+```
+
+From comparing:
+
+Part 1
+
+- Package-Gender, using first name vs all names: where they differ between identification is under the case when using first name it arrives at NA but with all names it does assign gender. My assumption is that it takes the last name and from there it extracts.
+
+- Package-Gender, using first name vs all names: the ones that differ in genders (not in NA as before) are only three observations. Googled them and the right way is when using first name.
+
+==> Conclusion: for package gender, is best to use first names.
+
+Part 2 
+
+- When comparing the gender from using Package-Gender with first name and Package-GenderC with first name, the latter identifies better non-anglosaxon names, for example 	
+Ayşe (women, gender_first = NA and genderC = female), and Yiwei (women, gender_first = NA and genderC = female) <- confirmed this via google; Guojun (men, gender_first = NA and genderC = male); Wendell (male, gender_first = male and genderC = NA).
+
+==> Conclusion: when either one of the Packages is 'None', we substitute with info from the other.
+
+Now, check 'Unisex' and 'female'/'male' differences.
+
+- When comparing both packages using the first names which have contrary results, it appears that (most of the time!) Package-GenderC identifies better the sex. From randomly sampling, it was checked by Google or manually. 
+
+```{r}
+sapply(data_raw, function(x){sum(is.na(x))})
+table(data_raw$creator_62, useNA = "always")
+```
+
+### Creating final databases which summarize gender
+
+- 3 Databases:
+  - Agreeing genders (package1 == package2)
+  - Only for package one
+  - Only for package two
+  
+GenderComputer: female, male, None and unisex
+Gender: f, m and None
+
+
+```{r}
+# Descriptive statistics
+sum(gender_id_first_PgenderC == "unisex", na.rm = TRUE)
+sum(gender_id_first_PgenderC == "None", na.rm = TRUE)
+sum(gender_id_first_PgenderC == "female", na.rm = TRUE)
+sum(gender_id_first_PgenderC == "male", na.rm = TRUE)
+
+sum(gender_id_first_Pgender == "None", na.rm = TRUE)
+sum(gender_id_first_Pgender == "f", na.rm = TRUE)
+sum(gender_id_first_Pgender == "m", na.rm = TRUE)
+```
+
+**Database of agreeing gender among both packages**
+  
+
+```{r}
+#test_g <- gender_id_first_Pgender[1:20,]
+#test_gC <- gender_id_first_PgenderC[1:20,]
+
+#test_g[test_g == "NA"] <- NA
+#test_gC[test_gC == "NA"] <- NA
+
+gender_id_first_bothP <- data.frame()
+for(i in 1:nrow(gender_id_first_Pgender)){
+    
+    # Number of authors in the article
+    temp_row <- as.character(gender_id_first_Pgender[i,])
+    temp_row[temp_row == "NA"] <- NA
+    not_na <- sum(!is.na(temp_row))
+    
+    # True matches 
+    tot <- sum(gender_id_first_Pgender[i,] == gender_id_first_PgenderC[i,], na.rm = TRUE)
+    
+    # Compare to see if all match
+    if(tot == not_na){
+      gender_id_first_bothP <- bind_rows(gender_id_first_bothP, gender_id_first_Pgender[i,])
+    }
+    
+}
+# Descriptions
+sum(gender_id_first_bothP == "None", na.rm = TRUE)
+sum(gender_id_first_bothP == "female", na.rm = TRUE)
+sum(gender_id_first_bothP == "male", na.rm = TRUE)
+
+# Final data about the first case 
+write.csv(gender_id_first_bothP, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_firstn_gender_bothP.csv")
+```
+
+```{r}
+gender_id_first_bothP <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/all_authors_firstn_gender_bothP.csv")
+```
+
+
+```{r}
+# Function: database with counts per gender
+gender_counts <- function(df){
+  # Counts
+  df_counts <- df %>% pivot_longer(cols = starts_with("author_"), names_to = "author", 
+                                  values_to = "gender", values_drop_na = TRUE) %>% 
+    group_by(id, gender) %>% summarise(total = n()) %>% 
+    pivot_wider(id_cols = id, names_from = gender, values_from = total)  
+  print(colnames(df_counts))
+  
+  # Percentage
+  df_pct <- sapply(df_counts[,-c(1)], function(x){x/rowSums(df_counts[,-c(1)], na.rm = TRUE)})
+  colnames(df_pct) <- paste0(colnames(df_counts)[-1], "_pct")
+  df_pct <- data.frame(df_pct)
+  print(colnames(df_pct))
+  
+  # Join both
+  df_final <- bind_cols(df_counts, df_pct)
+  
+  return(df_final)
+}
+
+gender_both0 <- gender_counts(gender_id_first_bothP)
+gender_Pgender0 <- gender_counts(gender_id_first_Pgender) 
+gender_PgenderC0 <- gender_counts(gender_id_first_PgenderC) 
+
+# Save counts by three cases
+write.csv(gender_both0, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/gender_counts_bothP.csv")
+write.csv(gender_Pgender0, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/gender_counts_Pgender.csv")
+write.csv(gender_PgenderC0, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/gender_counts_PgenderC.csv")
+```
+```{r}
+gender_both0 <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/gender_counts_bothP.csv")
+gender_Pgender0 <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/gender_counts_Pgender.csv")
+gender_PgenderC0 <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/gender_counts_PgenderC.csv")
+```
+
+Cosas por hacer
+- Checar cuales son los nombres que no coinciden entre bases, entre paquetes
+- Which are the missing values or unisex names in the lists? Corresponden a una nacionalidad? Esto importante de argumentar o saber que estoy controlando por esto.
+- Merge con la otra de not_na y validar
+- Crear la categoria de mixed
+- GenderComputer (PgenderC) has three categories: female, male and unisex. How to deal with these?
+
+**Database for identifying how much information**
+
+Evaluate each database on the percentage of information on gender that the package manages to identify:
+1. Male or female, no None/unisex. (here the info = 100%)
+2. Mix of male/female and None/unisex. Percentage of both categories. (info = (number of authors with binary gender identification) / (all results of authors: m, f, unisex, none, etc.))
+3. Only None/unisex. (info = 0%)
+
+
+```{r}
+# Histogram
+graphics.off()
+png("/Users/carolinachru/Documents/LT/M498_Cap/writting/appendix/appendix1_histogramNone.png",
+     pointsize = 18, width = 960, height = 720)
+hist(gender_both0$None_pct[!is.na(gender_both0$None)], main = "Distribution of unidentified genders for articles with at least one unidentified author", xlab = "Proportion")
+dev.off()
+
+cat_info <- c("male", "female")
+cat_na <- c("None")
+cat_na2 <- c("None", "unisex")
+
+# Function
+gender_info <- function(df){
+  final_data <- df %>% 
+    rowwise() %>% 
+    mutate(info = case_when((!is.na(male) | !is.na(female)) & is.na(None) ~ 1,
+                            (!is.na(male) | !is.na(female)) & !is.na(None) ~ 
+                            sum(male, female, na.rm = TRUE) / sum(male, female, None, na.rm = TRUE),
+                            (is.na(male) & is.na(female)) & !is.na(None) ~ 0))
+  return(final_data)
+}
+
+# For databases
+gender_both1 <- gender_info(gender_both0)
+gender_Pgender1 <- gender_info(gender_Pgender0)
+gender_PgenderC1 <- gender_PgenderC0 %>% # gender_info function with the unisex category
+  rowwise() %>% 
+  mutate(info = case_when((!is.na(male) | !is.na(female)) & is.na(None) & is.na(unisex) ~ 1,
+                          (!is.na(male) | !is.na(female)) & (!is.na(None) | !is.na(unisex))~ 
+                          sum(male, female, na.rm = TRUE) / 
+                            sum(male, female, None, unisex, na.rm = TRUE),
+                          (is.na(male) & is.na(female)) & (!is.na(None) | !is.na(unisex))~ 0))
+
+# Estimation for threshold
+nrow(gender_both1[gender_both1$info > 0.666,])
+nrow(gender_Pgender1[gender_Pgender1$info > 0.666,])
+```
+
+
+**Database gender**
+
+=> Each final database needs the following variables:
+  - Article id
+  - Number of authors (original, before any processing)
+  - How many identified with gender
+  - Number of women authors
+  - Number of men authors
+  - Classification variables
+  
+
+Classification variables, two forms:
+1. Form 1
+- Only women
+- Only men
+- Mixed
+  - (if mixed): alphabetic ordered authors
+  - (if mixed): non-alphabetically ordered + leading female author
+  - (if mixed): non-alphabetically ordered + leading female author
+
+2. Form 2
+- Predominantly women
+- Predominantly men
+- Half and half
+
+*About the alphabetic subcategories*
+
+Conclusion: use alpha_case1 because taking a random sample from the database for the differences between alpha_case1 and alpha_case2, it seems alpha_case1 is right most of the time, as there are names which use two first names (Luis Alberto Rivas, Sarah Louise Jewell)
+==> what are the implications of this?
+==> be transparent and argue the case. if I drop this, how many women and men? Which journals??
+
+Wait, until I run everything and see if I can disaggregate further or if its worth it!
+
+```{r}
+# Matching alpha_case1 and alpha_case2
+data_alpha_agree <- data_authors_alphab %>% 
+  mutate(agree = ifelse(alpha_case1 == alpha_case2, TRUE, FALSE)) %>% 
+  filter(agree == FALSE)
+  # 1,437
+
+# Decide which to use, alpha_case1 or alpha_case 2 to use it further, creo que mejor alpha1, reportar esto y % de cuanto podria afectar.. decir que chance no es tan significativo.
+# How to incorporate lo de info? A threshold to 
+# Hacer esquema de bases de datos: limitaciones de cada una, variables, y que necesito filtrar de ahi.. esto para escribir el procesamiento de la info
+```
+
+*Managing of None and unisex*
+```{r}
+# Number of None or unisex per article
+table(gender_both0$None)
+table(gender_Pgender0$None)
+table(gender_PgenderC0$None)
+table(gender_PgenderC0$unisex)
+```
+
+
+*Category: All*
+
+1. Predominantly men
+2. Predominantly women
+3. Half-half
+
+
+```{r}
+final_data_Pgender <- function(df0, df1, df_alpha, df_gender){
+  df_final <- df0 %>% left_join(df_alpha, by = "id") %>% 
+    left_join(df1, by = "id") %>% 
+    rename(male = male.x, female = female.x, None = None.x,
+           male_pct = male_pct.x, female_pct = female_pct.x, None_pct = None_pct.x,
+           num_authors_original = num_authors) %>% 
+    select(id, num_authors_original, info, list_cat1, alpha_case1, alpha_case2, allname_1:allname_10) %>% 
+    mutate(category = case_when(info == 1 & female_pct == 1 ~ "all_female",
+                                info == 1 & male_pct == 1 ~ "all_male",
+                                info == 1 & female_pct < 1 & male_pct < 1 ~ "mixed")) %>%
+    left_join(df_gender, by = "id") %>% 
+    select(-c(author_2:author_62)) %>% 
+    mutate(subcategory_mixed = ifelse(category == "mixed",
+                                      case_when(alpha_case1 == TRUE ~ "alphab",
+                                                alpha_case1 == FALSE & author_1 == "female" ~ "nonalph_female",
+                                                alpha_case1 == FALSE & author_1 == "male" ~ "nonalph_male"),
+                                      NA)) %>% 
+    rowwise() %>% mutate(num_authors = sum(female, male, na.rm = TRUE))
+  return(df_final)
+}
+# Databases with only male, female and None (Pgender and bothP)
+list_cat1 <- c("male", "female", "None", "male_pct", "female_pct", "None_pct")
+gender_both <- final_data_Pgender(gender_both0, gender_both1, data_authors_alphab, gender_id_first_bothP)
+gender_Pgender <- final_data_Pgender(gender_Pgender0, gender_Pgender1, data_authors_alphab, gender_id_first_Pgender)
+
+#Database with additional unisex category (PgenderC)
+list_cat2 <- c("male", "female", "unisex", "None", "male_pct", "female_pct", "unisex_pct", "None_pct")
+gender_PgenderC <- gender_PgenderC0 %>% left_join(data_authors_alphab, by = "id") %>% 
+  left_join(gender_PgenderC1, by = "id") %>% 
+  rename(male = male.x, female = female.x, unisex = unisex.x, None = None.x,
+         male_pct = male_pct.x, female_pct = female_pct.x, unisex_pct = unisex_pct.x, None_pct = None_pct.x) %>% 
+  select(id, num_authors, info, list_cat2, alpha_case1, alpha_case2, allname_1:allname_10) %>% 
+  mutate(category = case_when(info == 1 & female_pct == 1 ~ "all_female",
+                              info == 1 & male_pct == 1 ~ "all_male",
+                              info == 1 & female_pct < 1 & male_pct < 1 ~ "mixed")) %>%
+  left_join(gender_id_first_PgenderC, by = "id") %>% 
+  select(-c(author_2:author_62)) %>% 
+  mutate(subcategory_mixed = ifelse(category == "mixed",
+                                    case_when(alpha_case1 == TRUE ~ "alphab",
+                                              alpha_case1 == FALSE & author_1 == "female" ~ "nonalph_female",
+                                              alpha_case1 == FALSE & author_1 == "male" ~ "nonalph_male"),
+                                    NA))
+
+```
+
+```{r}
+# Save counts by three cases
+write.csv(gender_both, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/final_gender_both.csv")
+write.csv(gender_Pgender, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/final_gender_Pgender.csv")
+write.csv(gender_PgenderC, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/final_gender_PgenderC.csv")
+```
+
+```{r}
+# Save counts by three cases
+gender_both <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/final_gender_both.csv")
+gender_Pgender <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/final_gender_Pgender.csv")
+gender_PgenderC <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/final_gender_PgenderC.csv")
+```
+
+Unidentified names
+
+```{r}
+manual_raw <- data_raw %>% select(id, paste0("creator_", 1:62))
+manual_both <- gender_both %>% filter(None == 1) %>% 
+  left_join(gender_id_first_bothP, by = "id") %>% 
+  rename(author_1 = author_1.y) %>% 
+  select(id, num_authors, allname_1:allname_10, author_1:author_10) %>% 
+  filter(num_authors <= 10)
+
+# Identify all names without identification 
+names_final <- c()
+for(i in 1:nrow(manual_both)){
+  num_author <- manual_both$num_authors[i]
+  
+  temp_names <- manual_both[i, c(paste0("allname_", 1:num_author))]
+  temp_ident <- manual_both[i, c(paste0("author_", 1:num_author))]
+
+  author_none <- (temp_ident != "male") & (temp_ident != "female")
+  
+  names_not_id <- temp_names[author_none]
+  names_final <- c(names_final, names_not_id)
+}
+
+names_final1 <- data.frame(table(names_final))
+
+# Distribution of authors' name presence in articles
+test0 <- names_final1 %>% arrange(desc(Freq)) 
+test0 <- test0[3:2699,]
+quantile(test0$Freq, c(seq(from = 0, to = 1, by = 0.1)))
+
+```
+
+```{r}
+#Descriptions
+table(gender_both$category, gender_both$subcategory_mixed, useNA = "always")
+table(gender_Pgender$category, gender_Pgender$subcategory_mixed, useNA = "always")
+table(gender_PgenderC$category, gender_PgenderC$subcategory_mixed, useNA = "always")
+```
+

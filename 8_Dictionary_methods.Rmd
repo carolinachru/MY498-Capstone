@@ -1,0 +1,318 @@
+---
+title: "5. Gender preprocessing
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Topic analysis
+
+```{r}
+library(dplyr)
+library(quanteda)
+library(stringi)
+library(tidyr)
+library(ggplot2)
+library(rvest)
+library(GGally)
+library(pastecs)
+library(forcats)
+library(fmsb)
+#install.packages("fmsb")
+```
+
+Load database for topic analysis:
+
+```{r}
+df_both <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/final_bothP_clean.csv")
+```
+
+```{r}
+table(df_both$all_category)
+```
+
+
+*Quanteda*
+
+```{r}
+# One dataset 
+vars_all <- c("title", "info", "all_category", "publicationYear", "journal", "tdmCategory_1", "sourceCategory_1")
+all_corpus <- corpus(df_both$abstract, docvars = df_both[, vars_all])
+```
+
+Clean dfm
+
+```{r}
+# Function for dfm cleaning
+corpus_to_dfm <- function(corpus){
+  dfm <- corpus %>% 
+    tokens(remove_punct = TRUE, remove_symbols = TRUE, remove_numbers = TRUE, remove_url = TRUE) %>%
+    tokens_remove(stopwords("en")) %>% #padding = TRUE (incorporate this?)
+    tokens_ngrams(n = 1:2) %>%
+    dfm() %>%
+    dfm_trim(min_docfreq = 0.01, docfreq_type = "prop", verbose = TRUE) 
+  return(dfm)
+}
+```
+
+```{r}
+all_dfm <- corpus_to_dfm(all_corpus)
+```
+
+*Dictionary building*
+
+```{r}
+# Categories
+gender_chr <- c("female", "male", "women", "woman", "girl", "girls", "feminism", "feminist", "feminists")
+ethnic_chr <- c("white", "mixed", "black", "chinese", "arab", "caribbean", "indian", "gypsy", "indigenous", "hispanic", 'latin', "asian", "african")
+sex_lgbt_chr <- c("homosexual", "gay", "lesbian", "bisexual", "non-binary", "lgtb", "intersex", "trans", "transgender", "same-sex couple", "same-sex partner", "homophobia", "transphobia", "gender non-conforming")
+socioec_chr <- c("poor", "cash-transfers", "poverty", "unskilled", "working class", "lower class", "middle class", "vulnerable", "vulnerability", "precarious", "impoverished", "deprived", "deprivations")
+educ_chr <- c("school", "analphabet", "analphabets", "primary school", "illiterate", "illiterates", "uneducated", "education", "educational")
+age_chr <- c("child", "children", "youth", "young", "age")
+disab_chr <- c("impairment", "impaired", "disability", "disabilities", "disabled")
+religion_chr <- c("christianity", "christian", "christians", "buddhism", "buddhist", "buddhists", 
+                  "catholicism", "catholic", "catholicism", "protestantism", "protestant", "protestants", 
+                  "buddhism", "buddhist", "buddhists", "hinduism", "hinduist", "hinduists", 
+                  "judaism" ,"jewish", "jew", "jews", "islam", "muslim", "muslims",
+                  "sikhism", "sikh", "sikhs")
+migrat_chr <- c("migration", "migrate", "migrant", "immigrant", "refugee","refugees", "asylum")
+hiv_chr <- c("aids", "hiv", "antiretroviral", "arv", "seronegative", "seropositive", "serostatus")
+```
+
+Category: countries
+
+```{r}
+# Demonym
+url <- "https://en.wikipedia.org/wiki/List_of_adjectival_and_demonymic_forms_for_countries_and_nations"
+demonym0 <- read_html(url)
+demonym1 <- html_table(demonym0, fill=TRUE) #the fill option replaces empty values with NA
+demonym <- demonym1[[1]]
+colnames(demonym) <- c("country_wiki", "adjectivales", "demonyms")
+
+# List of countries by World Bank (https://datahelpdesk.worldbank.org/knowledgebase/articles/906519-world-bank-country-and-lending-groups)
+countries_wb <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/dictionary/countries_list.csv")
+countries_list <- countries_wb %>% left_join(demonym, by ="country_wiki") %>% select(country_wiki, country_simple, demonyms)
+countries_chr <- as.character(countries_list$country_simple)
+
+# Clean demonyms
+demonyms_chr <- as.character(countries_list$demonyms)
+demonyms_chr <- demonyms_chr[!is.na(demonyms_chr)]
+# Three manual modifications
+demonyms_chr[demonyms_chr == "Batswana (singular Motswana)"] <- "Batswana, Motswana"
+demonyms_chr[demonyms_chr == "Basotho (singular Mosotho)"] <- "Basotho, Mosotho"
+demonyms_chr[demonyms_chr == "Dominicans[d]"] <- "Dominicans"
+demonyms_chr[demonyms_chr == "Vietnamese people"] <- "Vietnamese"
+demonyms_chr <- unlist(strsplit(demonyms_chr, split = ",")) # Separate strings
+demonyms_chr <- unlist(strsplit(demonyms_chr, split = "/")) # Separate string
+demonyms_chr <- trimws(demonyms_chr, which = "both") # Remove leading and trailing white space
+
+# Lower case both (dfm's tokens are in lower case)
+countries_chr <- tolower(countries_chr)
+demonyms_chr <- tolower(demonyms_chr)
+
+# Final
+origin_chr <- c(countries_chr, demonyms_chr)
+```
+
+Dictionary
+
+```{r}
+dict_inters <- dictionary(list(dict_gender = gender_chr,
+                               dict_ethnic = ethnic_chr,
+                               dict_sex_lgbt = sex_lgbt_chr,
+                               dict_socioec = socioec_chr,
+                               dict_educ = educ_chr,
+                               dict_age = age_chr,
+                               dict_origin = origin_chr,
+                               dict_disab = disab_chr,
+                               dict_religion = religion_chr,
+                               dict_migrat = migrat_chr,
+                               dict_hiv = hiv_chr
+                               ))
+saveRDS(dict_inters, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/dictionary/dictionary.RDS")
+```
+
+```{r}
+dict_dfm <- dfm(all_corpus, dictionary = dict_inters)
+```
+
+```{r}
+dict_df0 <- convert(dict_dfm, to = "data.frame", docvars = data.frame(docvars(dict_dfm)))
+dict_df <- dict_df0[-1]
+
+# Instead of counts of words that match for each category, a binary whether the article has or not each category
+dict_df[dict_df > 0] <- 1 
+dict_df$intersec <- rowSums(dict_df) # Sum of categories being discussed
+table(dict_df$intersec)
+
+# Join dictionary results with df
+df_both_dic <- cbind(df_both, dict_df)
+table(df_both_dic$all_category, df_both_dic$intersec)
+dict_cats <- colnames(df_both_dic)[startsWith(colnames(df_both_dic), "dict_")]
+
+# For writing: cats for all women and all men research with 1 intersection
+df_both_dicXX <- df_both_dic %>% filter(all_category == "all_male" | all_category == "all_female", intersec == 1) %>% 
+  select(all_category, starts_with("dict_")) %>% group_by(all_category) %>% summarise_all(funs(sum)) 
+
+
+# Graph 1: grade of intersectionality
+grade_intersec0 <- data.frame(prop.table(table(df_both_dic$all_category, df_both_dic$intersec), 1))
+colnames(grade_intersec0) <- c("gender", "degree", "pct")
+grade_intersec0$degree <- as.character(grade_intersec0$degree)
+grade_intersec <- grade_intersec0 %>%  
+  mutate(degree = case_when(degree %in% c("5", "6", "7", "8") ~ "+5", degree == "0" ~ "None", TRUE ~ degree)) %>% 
+  group_by(gender, degree) %>% summarise(pct = sum(pct))
+vec_degrees <- c("None", "1", "2", "3", "4", "+5")
+grade_intersec$degree <- factor(grade_intersec$degree, levels = rev(vec_degrees))
+
+# Change all_category
+grade_intersec$gender <- factor(grade_intersec$gender, 
+                                levels = c("all_female", "nonalph_female", "alphab", "nonalph_male" , "all_male"))
+labels_gender <- c("Only women", "Mixed - lead women", "Mixed - alphabetical", "Mixed - lead men", "Only men")
+colors_gender <- c("all_female" = "firebrick", "all_male" = "grey30", 
+                   "alphab" = "rosybrown", "nonalph_female" = "tomato3", 
+                   "nonalph_male" = "grey69")
+# Option A
+ggplot(grade_intersec, aes(fill = gender, y = pct, x = degree)) + 
+  geom_bar(position="dodge", stat="identity") + coord_flip() + 
+  ylab("Percentage") + xlab("Number of intersections") + scale_y_continuous(labels = scales::percent) + 
+  scale_fill_manual("Gender", values = colors_gender, labels = labels_gender) + 
+  theme(legend.position = "bottom", axis.text.y = element_text(size=12),
+        axis.text.x = element_text(size=12), legend.text = element_text(size=11),
+        axis.title.x = element_text(size=11), axis.title.y = element_text(size=11)) 
+
+ggsave("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/dictionary1.jpeg", 
+       width = 10, height = 5)
+```
+
+
+Without the origin and socioeconomic intersection
+```{r}
+# Option B: without the origin and socioecon 
+dict_df_9 <- dict_df0[-1]
+dict_df_9[dict_df_9 > 0] <- 1 
+dict_df_9 <- dict_df_9 %>% select(-c("dict_origin", "dict_socioec"))
+dict_df_9$intersec <- rowSums(dict_df_9)
+df_both_dic9 <- cbind(df_both, dict_df_9)
+
+  # Graph 1B: grade of intersectionality
+grade_intersec09 <- data.frame(prop.table(table(df_both_dic9$all_category, df_both_dic9$intersec), 1))
+colnames(grade_intersec09) <- c("gender", "degree", "pct")
+grade_intersec09$degree <- as.character(grade_intersec09$degree)
+grade_intersec9 <- grade_intersec09 %>% 
+  mutate(degree = case_when(degree %in% c("5", "6", "7") ~ "+5",degree == "0" ~ "None", TRUE ~ degree)) %>% 
+  group_by(gender, degree) %>% summarise(pct = sum(pct))
+grade_intersec9$degree <- factor(grade_intersec9$degree, levels = rev(vec_degrees))
+
+# Change all_category
+grade_intersec9$gender <- factor(grade_intersec9$gender, 
+                                levels = c("all_female", "nonalph_female", "alphab", "nonalph_male" , "all_male"))
+labels_gender <- c("Only women", "Mixed - lead women", "Mixed - alphabetical", "Mixed - lead men", "Only men")
+colors_gender <- c("all_female" = "firebrick", "all_male" = "grey30", 
+                   "alphab" = "rosybrown", "nonalph_female" = "tomato3", 
+                   "nonalph_male" = "grey69")
+
+  # Option B
+ggplot(grade_intersec9, aes(fill = gender, y = pct, x = degree)) + 
+  geom_bar(position="dodge", stat="identity") + coord_flip() + 
+  ylab("Percentage") + xlab("Number of intersections") + scale_y_continuous(labels = scales::percent) + 
+  scale_fill_manual("Gender", values = colors_gender, labels = labels_gender) + 
+  theme(legend.position = "bottom", axis.text.y = element_text(size=12),
+        axis.text.x = element_text(size=12), legend.text = element_text(size=11),
+        axis.title.x = element_text(size=11), axis.title.y = element_text(size=11)) 
+
+ggsave("/Users/carolinachru/Documents/LT/M498_Cap/writting/appendix/appendix7_dict_no2cats.jpeg", 
+       width = 10, height = 5)
+```
+
+```{r}
+# Graph 2: proportion of intersectional topics
+prop_cats <- df_both_dic %>% select(all_category, dict_cats) %>% 
+  mutate(all_category = case_when(all_category != "all_female" & all_category != "all_male" ~ "mixed", 
+                                  TRUE ~ all_category)) %>%  group_by(all_category) %>% 
+  summarise_all(funs(sum)) %>% 
+  pivot_longer(cols = starts_with("dict_"), names_to = "category", values_to = "num") %>% 
+  group_by(all_category) %>% mutate(prop = num / sum(num))
+  # Here, dict_* does not equal the total num of obs as a an article can be in more than one category
+
+# Graph lines
+
+# Graph radar: proportion of intersectional topics
+prop_cats_radar <- df_both_dic %>% select(all_category, dict_cats) %>% 
+  mutate(all_category = case_when(all_category != "all_female" & all_category != "all_male" ~ "mixed", 
+                                  TRUE ~ all_category)) %>% 
+  group_by(all_category) %>% summarise_all(funs(sum)) 
+prop_cats_radar <- prop_cats_radar[,-c(1)]
+tot0 <- rowSums(prop_cats_radar)
+prop_cats_radar1 <- prop_cats_radar/tot0
+
+colors_border <- c("firebrick", "grey30", "cadetblue3")
+colors_in <- c("firebrick", "grey30", "cadetblue3")
+colnames(prop_cats_radar1) <- c("Gender", "Ethnic", "LGBT", "Class", "Education", "Age", 
+                                "Country", "Disability", "Religion", "Migration", "HIV/AIDS")
+
+prop_cats_radar2 <- rbind(rep(max(prop_cats_radar1), 11), rep(min(prop_cats_radar1), 11), prop_cats_radar1)
+
+jpeg("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/dictionary2.jpeg",
+     quality = 200, pointsize = 25, width = 960, height = 960)
+{
+  radarchart(prop_cats_radar2, axistype = 1,
+           pcol = colors_border, pfcol = scales::alpha(colors_in, 0.05), plwd = 4, plty = 1,  # polygon
+           cglcol = "grey", cglty = 1, axislabcol = "grey", caxislabels= seq(0, 30, 6), cglwd = 0.8,
+           vlcex = 0.8)
+  legend("bottomright", legend = c("Only women", "Only men", "Mixed"), horiz = FALSE, 
+       bty = "n", pch = 20 , col = colors_in, text.col = "black", cex = 0.8, pt.cex = 2)
+}
+dev.off()
+
+prop_cats_radar3 <- prop_cats_radar2[3:5,]
+prop_cats_radar3$cats <- c("Only women", "Only men", "Mixed")
+prop_cats_radar3 <- prop_cats_radar3 %>% pivot_longer(cols = colnames(prop_cats_radar2), names_to = "inters",
+                                                      values_to = "prop")
+ggplot(prop_cats_radar3, aes(x = prop, color = cats, fill = cats)) + 
+  geom_density(position="identity", alpha = 0.2, size = 1) +
+  scale_color_manual(values=c("firebrick", "grey30", "cadetblue3")) + 
+  scale_fill_manual(values=c("firebrick", "grey30", "cadetblue3")) + 
+  xlab("Proportion") + ylab("Density") + labs(color="Gender") + guides(fill=FALSE) +
+  theme(legend.position="bottom")
+
+ggsave("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/dictionary3_density.jpeg", 
+       width = 6, height = 6)
+```
+
+https://www.r-graph-gallery.com/lollipop-plot.html
+https://www.r-graph-gallery.com/143-spider-chart-with-saveral-individuals.html
+http://r-statistics.co/Top50-Ggplot2-Visualizations-MasterList-R-Code.html
+https://eazybi.com/blog/data-visualization-and-chart-types
+
+
+para topics:::
+barplot and lollipop plots
+
+para dic::
+parallel coordinates plot
+https://www.r-graph-gallery.com/circle-packing.html
+
+*Keyness*
+
+```{r}
+dfm_key <- all_corpus %>% 
+    tokens(remove_punct = TRUE, remove_symbols = TRUE, remove_numbers = TRUE, remove_url = TRUE) %>%
+    tokens_remove(stopwords("en")) %>% #padding = TRUE (incorporate this?)
+    tokens_wordstem() %>% 
+    tokens_ngrams(n = 1:2) %>%
+    dfm(groups = "all_category") %>%
+    dfm_trim(min_docfreq = 0.01, docfreq_type = "prop", verbose = TRUE) 
+
+# Only women
+head(textstat_keyness(dfm_key, target="all_female",
+                      measure="chi2"), n=20)
+head(textstat_keyness(dfm_key, target="all_male",
+                      measure="chi2"), n=20)
+textstat_keyness(dfm_key, target="all_female",
+                      measure="chi2") %>% textplot_keyness()
+```
+
+
