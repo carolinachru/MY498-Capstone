@@ -99,6 +99,7 @@ countries_chr <- as.character(countries_list$country_simple)
 # Clean demonyms
 demonyms_chr <- as.character(countries_list$demonyms)
 demonyms_chr <- demonyms_chr[!is.na(demonyms_chr)]
+
 # Three manual modifications
 demonyms_chr[demonyms_chr == "Batswana (singular Motswana)"] <- "Batswana, Motswana"
 demonyms_chr[demonyms_chr == "Basotho (singular Mosotho)"] <- "Basotho, Mosotho"
@@ -286,14 +287,6 @@ https://www.r-graph-gallery.com/lollipop-plot.html
 https://www.r-graph-gallery.com/143-spider-chart-with-saveral-individuals.html
 http://r-statistics.co/Top50-Ggplot2-Visualizations-MasterList-R-Code.html
 https://eazybi.com/blog/data-visualization-and-chart-types
-
-
-para topics:::
-barplot and lollipop plots
-
-para dic::
-parallel coordinates plot
-https://www.r-graph-gallery.com/circle-packing.html
 
 *Keyness*
 

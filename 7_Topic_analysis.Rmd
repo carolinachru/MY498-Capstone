@@ -57,11 +57,9 @@ df_both <- df_both %>% mutate(len_abs = nchar(abstract), pct = ntile(len_abs, 10
   filter(pct != 1, pct != 100) %>% select(-c(len_abs, pct)) %>% 
   mutate(all_category = case_when(category == "all_male" | category ==  "all_female" ~ category, 
                                   category == "mixed" ~ subcategory_mixed)) 
-  # Here: 34,868
-  # aqui drop los 9
-# Drop articles with information
-df_both <- df_both %>% filter(info == 1, !is.na(all_category)) # 9
-  # Here: 31,171
+
+# Drop articles without information
+df_both <- df_both %>% filter(info == 1, !is.na(all_category))
 
 # To factors for the stm model
 df_both$all_category <- factor(df_both$all_category,
@@ -274,7 +272,9 @@ est_topics <- function(stm_obj, value_k){
 #plot(topic_all)
 #cloud(topic_fem, topic = 41, scale = c(2,.25))
 ```
+
 Save (use formula to save same)
+
 ```{r}
 name_of_model <- "all_01" # Change here
 path <- "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/"
@@ -349,9 +349,6 @@ ggsave("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/topics_K.jpe
        width = 10, height = 5)
 ```
 
-
-
-
 ```{r}
 # Dataframe for average of both metrics 
 exclus_semcoh_avg_df <- data.frame(K = as.character(unlist(k_search1$results$K)),
@@ -366,7 +363,7 @@ saveRDS(k_search1, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constel
 saveRDS(topic_explore, "/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/topic_models/all_est_topics2.RDS")
 ```
 
-Choose number of topics (human judgement)
+Choose number of topics (Human judgement)
 
 ```{r}
 # 30, 35 y 40
@@ -454,8 +451,6 @@ preds_pointT <- preds_point1 %>% group_by(topic) %>% summarise(fem_tot = sum(fem
 
 preds_point2 <- preds_point1 %>% left_join(preds_pointT, by = "topic") 
 
-#ggplot(preds_point2, aes(x = proportion, y = reorder(topic, fem_tot), color = value)) + geom_text(aes(label=labs), size = 4) + scale_color_brewer(palette = "PRGn")  + geom_line()
-
 # Labels
 topic40_words <- labelTopics(topic40_wcontent) # HERE, CHANGE TOPIC MODEL
 topic40_words_top <- data.frame(cbind(1:40), topic40_words$topics)
@@ -493,7 +488,7 @@ ggplot(preds_point3) +
   coord_flip() +
   theme(text = element_text(size=22), axis.text.x = element_text(size = 12), legend.position="bottom")  +
   ylab("Proportion") + xlab("Topics") + scale_color_discrete(name = "New Name") +
-  facet_wrap( ~ bigg_fem, ncol = 1, scales = "free_y", labeller = as_labeller(facet_names)) #+ scale_x_discrete(position = "top") 
+  facet_wrap( ~ bigg_fem, ncol = 1, scales = "free_y", labeller = as_labeller(facet_names)) 
 
 ggsave("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/topic_graph1_Content.png",
        width = 14, height = 20)
@@ -522,7 +517,6 @@ dev.off()
 ```{r}
 sametopic_gender <- c(34, 16, 13, 30, 29, 38, 18, 22)
 
-#i <- sametopic_gender[1]
 for(i in sametopic_gender){
   graphics.off()
   png(file = paste0("/Users/carolinachru/Documents/LT/M498_Cap/writting/graficos/topics_words/topic40content_word", 
@@ -551,7 +545,7 @@ for(i in 1:nrow(topic40wc_theta)){
 
 which.max(table(main_topic))
 table(main_topic)
-6386/31171
+
 ```
 
 ```{r}

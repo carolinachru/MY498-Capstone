@@ -190,7 +190,6 @@ table(data_raw$creator_62, useNA = "always")
 GenderComputer: female, male, None and unisex
 Gender: f, m and None
 
-
 ```{r}
 # Descriptive statistics
 sum(gender_id_first_PgenderC == "unisex", na.rm = TRUE)
@@ -204,7 +203,6 @@ sum(gender_id_first_Pgender == "m", na.rm = TRUE)
 ```
 
 **Database of agreeing gender among both packages**
-  
 
 ```{r}
 #test_g <- gender_id_first_Pgender[1:20,]
@@ -281,12 +279,6 @@ gender_Pgender0 <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jsto
 gender_PgenderC0 <- read.csv("/Users/carolinachru/Documents/LT/M498_Cap/data/jstor_constellate/final/gender_3cases/gender_counts_PgenderC.csv")
 ```
 
-Cosas por hacer
-- Checar cuales son los nombres que no coinciden entre bases, entre paquetes
-- Which are the missing values or unisex names in the lists? Corresponden a una nacionalidad? Esto importante de argumentar o saber que estoy controlando por esto.
-- Merge con la otra de not_na y validar
-- Crear la categoria de mixed
-- GenderComputer (PgenderC) has three categories: female, male and unisex. How to deal with these?
 
 **Database for identifying how much information**
 
@@ -294,7 +286,6 @@ Evaluate each database on the percentage of information on gender that the packa
 1. Male or female, no None/unisex. (here the info = 100%)
 2. Mix of male/female and None/unisex. Percentage of both categories. (info = (number of authors with binary gender identification) / (all results of authors: m, f, unisex, none, etc.))
 3. Only None/unisex. (info = 0%)
-
 
 ```{r}
 # Histogram
@@ -364,10 +355,6 @@ Classification variables, two forms:
 *About the alphabetic subcategories*
 
 Conclusion: use alpha_case1 because taking a random sample from the database for the differences between alpha_case1 and alpha_case2, it seems alpha_case1 is right most of the time, as there are names which use two first names (Luis Alberto Rivas, Sarah Louise Jewell)
-==> what are the implications of this?
-==> be transparent and argue the case. if I drop this, how many women and men? Which journals??
-
-Wait, until I run everything and see if I can disaggregate further or if its worth it!
 
 ```{r}
 # Matching alpha_case1 and alpha_case2
@@ -376,9 +363,6 @@ data_alpha_agree <- data_authors_alphab %>%
   filter(agree == FALSE)
   # 1,437
 
-# Decide which to use, alpha_case1 or alpha_case 2 to use it further, creo que mejor alpha1, reportar esto y % de cuanto podria afectar.. decir que chance no es tan significativo.
-# How to incorporate lo de info? A threshold to 
-# Hacer esquema de bases de datos: limitaciones de cada una, variables, y que necesito filtrar de ahi.. esto para escribir el procesamiento de la info
 ```
 
 *Managing of None and unisex*
@@ -392,11 +376,6 @@ table(gender_PgenderC0$unisex)
 
 
 *Category: All*
-
-1. Predominantly men
-2. Predominantly women
-3. Half-half
-
 
 ```{r}
 final_data_Pgender <- function(df0, df1, df_alpha, df_gender){

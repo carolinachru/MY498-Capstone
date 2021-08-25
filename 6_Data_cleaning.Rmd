@@ -9,8 +9,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Processing databases that have already identified the gender for authors.
 
-__Just as before, to proceed with the gender identification, the initial data set (all_nograms_raw.RDS) is filtered so I stay with only those articles which have abstract.__
-
 ```{r}
 library(jsonlite)
 library(dplyr)

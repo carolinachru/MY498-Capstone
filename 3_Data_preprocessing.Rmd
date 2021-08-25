@@ -43,7 +43,6 @@ data_authors <- data_raw1 %>% select(id, starts_with("creator_"))
 sum(!is.na(data_authors[,-c(1)]))
 sum(is.na(data_authors[,-c(1)]))
 
-# (3477608 + 112502) - (62*57905) = 0 ==> calculo anterior correcto
 ```
 
 
@@ -129,7 +128,6 @@ Database contains:
 In case 2, the componentes "van" (e.g., van Berg) and "de" (e.g., de Alba) are removed if all letters are lower (van, de) or upper (VAN, DER). If the first letter is upper and following lower, then it is counted as a last name. This because in some sources, it said depending by country sometimes the components are taken as lastnames and other just as components. In this sense, I will 'respect' the reporting by authors.
   Source: https://academia.stackexchange.com/questions/8870/how-should-van-names-be-ordered-in-a-bibliography
   
-  Other agregaciones se vieron como "der" and "von". This is a potential problem. also, Jr. JR or Jr
 
 ```{r}
 alphab_ordering <- function(df){
@@ -232,11 +230,6 @@ alphab_case2 <- ifelse(not_na == 1, NA,
 
 
 
-# Function for counting number of authors (raw)
-
-# Function for counting number of used authors
-
-# Function for determining if alphabetically ordered or not
 ```
 
 ```{r commands-test}
